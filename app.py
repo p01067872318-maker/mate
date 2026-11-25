@@ -484,6 +484,48 @@ def ai_ready():
     return bool(_secret("GEMINI_API_KEY"))
 
 
+GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def _err_detail(r):
+    try:
+        return str(r.json().get("error", {}).get("message", ""))[:160]
+    except Exception:
+        return ""
+
+
+def gemini_models(key):
+    """이 키로 지금 쓸 수 있는 모델을 구글에 물어보고, 쓸 만한 순서로 돌려준다."""
+    if st.session_state.get("gm_list"):
+        return st.session_state.gm_list, ""
+    try:
+        r = requests.get(f"{GEMINI_API}/models", headers={"x-goog-api-key": key},
+                         params={"pageSize": 1000}, timeout=30)
+    except Exception:
+        return [], "인터넷 연결 문제로 AI에 닿지 못했어요."
+    if r.status_code != 200:
+        return [], f"모델 목록을 받지 못했어요 (코드 {r.status_code}). {_err_detail(r)}"
+    scored = []
+    for m in r.json().get("models", []):
+        name = str(m.get("name", "")).split("/")[-1]
+        if "generateContent" not in m.get("supportedGenerationMethods", []):
+            continue
+        if not name.startswith("gemini") or re.search(r"image|tts|live|audio|embed|native|robot|computer", name):
+            continue
+        v = re.search(r"gemini-(\d+(?:\.\d+)?)", name)
+        ver = float(v.group(1)) if v else 0.0
+        score = ver
+        score += 100 if "flash" in name else 0
+        score -= 50 if "lite" in name else 0
+        score -= 0.05 if re.search(r"preview|exp", name) else 0
+        score += 0.01 if "latest" in name else 0
+        scored.append((score, name))
+    names = [n for _, n in sorted(scored, reverse=True)]
+    if names:
+        st.session_state.gm_list = names
+    return names, "" if names else "이 키로 쓸 수 있는 Gemini 모델이 없어요."
+
+
 def gemini_json(data, mime, prompt):
     """이미지(또는 PDF)와 지시문을 보내 JSON을 돌려받는다. (결과, 오류문구)"""
     key = _secret("GEMINI_API_KEY")
@@ -494,30 +536,37 @@ def gemini_json(data, mime, prompt):
         {"text": prompt}]}],
         "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}
     custom = _secret("GEMINI_MODEL")
-    err = "응답을 받지 못했어요."
-    for model in ([custom] if custom else []) + GEMINI_MODELS:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    found, list_err = gemini_models(key)
+    order = []
+    for m in ([custom] if custom else []) + found[:6] + GEMINI_MODELS:
+        if m and m not in order:
+            order.append(m)
+    err = list_err or "응답을 받지 못했어요."
+    for model in order:
         try:
-            r = requests.post(url, headers={"x-goog-api-key": key}, json=body, timeout=60)
+            r = requests.post(f"{GEMINI_API}/models/{model}:generateContent",
+                              headers={"x-goog-api-key": key}, json=body, timeout=60)
         except Exception:
             return None, "인터넷 연결 문제로 AI에 닿지 못했어요."
-        if r.status_code == 404:
-            err = "사용할 수 있는 Gemini 모델을 찾지 못했어요."
-            continue
+        if r.status_code == 200:
+            try:
+                parts = r.json()["candidates"][0]["content"]["parts"]
+                text = "".join(p.get("text", "") for p in parts).strip()
+                text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+                st.session_state.gm_list = [model] + [m for m in found if m != model]
+                return json.loads(text), ""
+            except Exception:
+                err = "AI 응답을 해석하지 못했어요. 한 번 더 시도해 주세요."
+                continue
+        if r.status_code in (401, 403):
+            return None, f"API 키에 문제가 있어요 (코드 {r.status_code}). Secrets의 키를 확인해 주세요. {_err_detail(r)}"
         if r.status_code == 429:
-            return None, "무료 사용 한도를 잠시 넘었어요. 1분쯤 뒤에 다시 시도해 주세요."
-        if r.status_code in (400, 401, 403):
-            return None, f"API 키나 요청에 문제가 있어요 (코드 {r.status_code}). Secrets의 키를 확인해 주세요."
-        if r.status_code != 200:
-            err = f"AI 서버 오류예요 (코드 {r.status_code})."
+            err = "무료 사용 한도를 잠시 넘었어요. 1분쯤 뒤에 다시 시도해 주세요."
             continue
-        try:
-            parts = r.json()["candidates"][0]["content"]["parts"]
-            text = "".join(p.get("text", "") for p in parts).strip()
-            text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-            return json.loads(text), ""
-        except Exception:
-            err = "AI 응답을 해석하지 못했어요."
+        if r.status_code == 404:
+            err = list_err or f"모델 {model}을(를) 쓸 수 없어요. {_err_detail(r)}"
+            continue
+        err = f"AI 요청이 실패했어요 (모델 {model}, 코드 {r.status_code}). {_err_detail(r)}"
     return None, err
 
 
