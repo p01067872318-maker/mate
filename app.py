@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Campus Mate — 대화와 캡처로 일정·학업을 관리하는 AI 비서 (API 없이 동작하는 시연용 데모)
+"""mate — 대화와 캡처로 일정·학업을 관리하는 AI 비서
 
 실행:  streamlit run app.py
 """
@@ -7,6 +7,7 @@ import base64
 import calendar as pycal
 import hashlib
 import html
+import io
 import json
 import random
 import re
@@ -16,7 +17,15 @@ from datetime import date, datetime, timedelta, timezone
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="Campus Mate", page_icon="📎", layout="wide",
+LOGO_B64 = "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"
+LOGO = "data:image/png;base64," + LOGO_B64
+try:
+    from PIL import Image as _PILImage
+    LOGO_IMG = _PILImage.open(io.BytesIO(base64.b64decode(LOGO_B64)))
+except Exception:
+    LOGO_IMG = "🎓"
+
+st.set_page_config(page_title="mate", page_icon=LOGO_IMG, layout="wide",
                    initial_sidebar_state="expanded")
 
 # ─────────────────────────────────────────────────────────────
@@ -178,112 +187,120 @@ PLAN_STEPS = {
 CSS = """
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
-:root{--ink:#1A2238;--sub:#5F6880;--mute:#98A0B4;--line:#E4E7F0;--paper:#F5F6FA;--card:#FFFFFF;
---blue:#3D5AFE;--blue-soft:#EEF1FF;--mark:#FFE45C;}
+:root{--ink:#1F2440;--sub:#5C6382;--mute:#9AA0B8;--line:#E9EBF5;--paper:#FFFFFF;--side:#F7F8FD;--card:#FFFFFF;
+--blue:#5B6CF0;--blue-deep:#4353D6;--blue-soft:#EEF0FE;--mark:#DCE0FD;--sun:#F5B83D;--hot:#F0567A;}
 html,body,.stApp,.stMarkdown,p,h1,h2,h3,h4,h5,label,button,input,textarea,select,li,td,th{
 font-family:'Pretendard Variable',Pretendard,-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;}
 .stApp{background:var(--paper);color:var(--ink);}
 [data-testid="stHeader"]{background:transparent;}
-[data-testid="stMain"] .block-container{max-width:1240px;padding:2.2rem 2.4rem 5rem;}
-[data-testid="stSidebar"]{background:#fff;border-right:1px solid var(--line);}
-[data-testid="stSidebar"] .stButton>button{justify-content:flex-start;border:0;border-radius:10px;padding:.55rem .8rem;font-weight:600;color:var(--sub);background:transparent;}
+[data-testid="stMain"] .block-container{max-width:1180px;padding:2.4rem 2.6rem 5rem;}
+[data-testid="stSidebar"]{background:var(--side);border-right:1px solid var(--line);}
+[data-testid="stSidebar"] .stButton>button{justify-content:flex-start;border:0;border-radius:14px;padding:.6rem .85rem;font-weight:600;color:var(--sub);background:transparent;box-shadow:none;}
 [data-testid="stSidebar"] .stButton>button>div{justify-content:flex-start;width:100%;}
-[data-testid="stSidebar"] .stButton>button:hover{background:var(--paper);color:var(--ink);}
-[data-testid="stSidebar"] .stButton>button[kind="primary"]{background:var(--ink);color:#fff;}
-[data-testid="stSidebar"] .stButton>button[kind="primary"]:hover{background:var(--ink);color:#fff;}
-.stButton>button,.stDownloadButton>button,[data-testid="stFormSubmitButton"]>button{border-radius:10px;font-weight:650;}
+[data-testid="stSidebar"] .stButton>button:hover{background:#fff;color:var(--ink);}
+[data-testid="stSidebar"] .stButton>button[kind="primary"]{background:var(--blue-soft);color:var(--blue-deep);font-weight:750;}
+[data-testid="stSidebar"] .stButton>button[kind="primary"]:hover{background:var(--blue-soft);color:var(--blue-deep);}
+.stButton>button,.stDownloadButton>button,[data-testid="stFormSubmitButton"]>button{border-radius:14px;font-weight:650;border-color:var(--line);}
+[data-testid="stMain"] .stButton>button:hover,.stDownloadButton>button:hover{border-color:var(--blue);color:var(--blue-deep);}
 .stButton>button:focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
 [data-testid="stMain"] .stButton>button[kind="primary"],[data-testid="stFormSubmitButton"]>button[kind="primary"]{background:var(--blue);border-color:var(--blue);color:#fff;}
-[data-testid="stVerticalBlockBorderWrapper"]{border-radius:16px;}
-div[data-testid="stChatMessage"]{background:transparent;padding:.35rem 0;gap:.7rem;}
-div[data-testid="stChatInput"]>div{border-radius:16px;border:1.5px solid var(--line);box-shadow:0 10px 30px rgba(26,34,56,.08);}
+[data-testid="stMain"] .stButton>button[kind="primary"]:hover,[data-testid="stFormSubmitButton"]>button[kind="primary"]:hover{background:var(--blue-deep);border-color:var(--blue-deep);color:#fff;}
+[data-testid="stVerticalBlockBorderWrapper"]{border-radius:20px;}
+div[data-testid="stChatMessage"]{background:transparent;padding:.4rem 0;gap:.75rem;}
+div[data-testid="stChatInput"]>div{border-radius:22px;border:1.5px solid var(--line);box-shadow:0 10px 30px rgba(67,83,214,.10);}
+div[data-testid="stChatInput"]>div:focus-within{border-color:var(--blue);}
 
-.cm-brand{display:flex;align-items:center;gap:10px;padding:4px 4px 18px;}
-.cm-logo{width:38px;height:38px;border-radius:11px;background:var(--ink);display:flex;align-items:center;justify-content:center;position:relative;}
-.cm-logo:before{content:"";width:16px;height:16px;border:3px solid #fff;border-radius:50%;}
-.cm-logo:after{content:"";position:absolute;right:7px;bottom:7px;width:9px;height:9px;border-radius:50%;background:var(--mark);}
-.cm-brand b{font-size:17px;font-weight:800;letter-spacing:-.03em;color:var(--ink);display:block;line-height:1.2;}
-.cm-brand span{font-size:12px;color:var(--mute);}
-.cm-me{margin-top:14px;padding:12px;border-radius:12px;background:var(--paper);font-size:12.5px;color:var(--sub);line-height:1.6;}
+.cm-brand{display:flex;align-items:center;gap:11px;padding:4px 4px 18px;}
+.cm-brand img{width:42px;height:42px;border-radius:12px;display:block;}
+.cm-brand b{font-size:21px;font-weight:800;letter-spacing:-.04em;color:var(--ink);display:block;line-height:1.15;}
+.cm-brand span{font-size:11.5px;color:var(--mute);}
+.cm-me{margin-top:14px;padding:13px 14px;border-radius:16px;background:#fff;border:1px solid var(--line);font-size:12.5px;color:var(--sub);line-height:1.65;}
 .cm-me b{color:var(--ink);font-size:14px;}
+.cm-hero{display:flex;align-items:center;gap:18px;margin:0 0 20px;}
+.cm-hero img{width:92px;height:92px;border-radius:24px;box-shadow:0 14px 30px rgba(67,83,214,.28);}
+.cm-hero b{font-size:40px;font-weight:800;letter-spacing:-.05em;color:var(--ink);line-height:1;}
 
-.cm-h1{font-size:34px;font-weight:800;letter-spacing:-.045em;line-height:1.25;color:var(--ink);margin:0 0 6px;}
-.cm-h1 mark,.cm-mark{background:linear-gradient(transparent 58%,var(--mark) 58%,var(--mark) 92%,transparent 92%);color:inherit;padding:0 2px;}
-.cm-lead{font-size:15px;color:var(--sub);line-height:1.65;margin:0 0 22px;max-width:62ch;}
-.cm-h2{font-size:17px;font-weight:750;letter-spacing:-.02em;color:var(--ink);margin:6px 0 10px;}
+.cm-h1{font-size:32px;font-weight:800;letter-spacing:-.045em;line-height:1.28;color:var(--ink);margin:0 0 8px;}
+.cm-h1 mark,.cm-mark{background:linear-gradient(transparent 60%,var(--mark) 60%,var(--mark) 94%,transparent 94%);color:inherit;padding:0 2px;}
+.cm-lead{font-size:15px;color:var(--sub);line-height:1.7;margin:0 0 24px;max-width:62ch;}
+.cm-h2{font-size:16.5px;font-weight:750;letter-spacing:-.02em;color:var(--ink);margin:6px 0 10px;}
 .cm-note{font-size:12.5px;color:var(--mute);line-height:1.6;}
-.cm-demo{display:inline-block;font-size:11.5px;font-weight:650;color:#7A5A00;background:#FFF6CC;border-radius:6px;padding:2px 7px;}
+.cm-demo{display:inline-block;font-size:11.5px;font-weight:650;color:var(--blue-deep);background:var(--blue-soft);border-radius:999px;padding:2px 9px;}
 
-.cm-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 9px;line-height:1.6;}
-.cm-dday{font-size:11.5px;font-weight:800;border-radius:6px;padding:2px 7px;background:var(--ink);color:#fff;}
-.cm-dday.hot{background:#F0567A;}
-.cm-dday.done{background:#DDE1EC;color:#6B7389;}
+.cm-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 10px;line-height:1.6;}
+.cm-dday{font-size:11.5px;font-weight:800;border-radius:999px;padding:2px 9px;background:var(--blue-soft);color:var(--blue-deep);}
+.cm-dday.hot{background:var(--hot);color:#fff;}
+.cm-dday.done{background:#EEF0F6;color:#8087A0;}
 
-.cm-row{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);}
+.cm-row{display:flex;gap:12px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line);}
 .cm-row:last-child{border-bottom:0;}
 .cm-row .t{width:46px;flex:none;font-size:12.5px;font-weight:700;color:var(--sub);padding-top:1px;font-variant-numeric:tabular-nums;}
 .cm-row .bar{width:4px;align-self:stretch;border-radius:4px;flex:none;}
 .cm-row .b{font-size:14px;font-weight:650;color:var(--ink);line-height:1.4;}
 .cm-row .s{font-size:12px;color:var(--mute);margin-top:2px;}
 .cm-empty{font-size:13px;color:var(--mute);padding:14px 0;}
+.cm-cheer{display:flex;align-items:center;gap:14px;padding:18px 20px;border-radius:20px;background:var(--blue-soft);margin:4px 0 12px;}
+.cm-cheer img{width:52px;height:52px;border-radius:15px;flex:none;}
+.cm-cheer b{display:block;font-size:15px;font-weight:750;color:var(--ink);}
+.cm-cheer span{font-size:13px;color:var(--sub);}
 
-.cm-alert{border-radius:14px;padding:12px 14px;background:#fff;border:1px solid var(--line);margin-bottom:8px;border-left:5px solid var(--mark);}
-.cm-alert .k{font-size:11.5px;font-weight:800;color:#8A6A00;}
-.cm-alert .b{font-size:14px;font-weight:700;color:var(--ink);margin:2px 0;}
+.cm-alert{border-radius:18px;padding:14px 16px;background:var(--blue-soft);margin-bottom:8px;}
+.cm-alert .k{font-size:11.5px;font-weight:800;color:var(--blue-deep);}
+.cm-alert .b{font-size:14.5px;font-weight:750;color:var(--ink);margin:3px 0;}
 .cm-alert .s{font-size:12.5px;color:var(--sub);}
 
-.cm-cand{border-radius:14px;background:#fff;border:1.5px solid var(--ink);padding:14px 16px;margin:6px 0 4px;}
-.cm-cand .b{font-size:16px;font-weight:800;letter-spacing:-.02em;margin:6px 0 8px;}
+.cm-cand{border-radius:20px;background:#fff;border:1.5px solid var(--blue);padding:15px 18px;margin:6px 0 4px;box-shadow:0 8px 22px rgba(67,83,214,.10);}
+.cm-cand .b{font-size:16px;font-weight:800;letter-spacing:-.02em;margin:7px 0 9px;}
 .cm-cand dl{display:grid;grid-template-columns:64px 1fr;gap:4px 10px;margin:0;font-size:13px;}
 .cm-cand dt{color:var(--mute);font-weight:600;}
 .cm-cand dd{margin:0;color:var(--ink);font-weight:600;}
-.cm-ok{font-size:13px;font-weight:700;color:#0B7257;}
+.cm-ok{font-size:13px;font-weight:700;color:#0B8A63;}
 
-.cm-shot{border-radius:12px;background:#fff;border:1px solid var(--line);padding:14px 16px;max-width:420px;font-size:13px;line-height:1.7;color:var(--ink);box-shadow:0 6px 18px rgba(26,34,56,.07);}
+.cm-shot{border-radius:16px;background:#fff;border:1px solid var(--line);padding:14px 16px;max-width:420px;font-size:13px;line-height:1.7;color:var(--ink);box-shadow:0 8px 22px rgba(31,36,64,.07);}
 .cm-shot .bar{font-size:11px;color:var(--mute);border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:8px;display:flex;justify-content:space-between;}
 .cm-shot b{font-size:14px;}
 
-.cm-cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff;}
-.cm-cal .hd{font-size:12px;font-weight:700;color:var(--mute);padding:10px 10px 8px;border-bottom:1px solid var(--line);}
+.cm-cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--line);border-radius:20px;overflow:hidden;background:#fff;}
+.cm-cal .hd{font-size:12px;font-weight:700;color:var(--mute);padding:11px 10px 9px;border-bottom:1px solid var(--line);}
 .cm-cal .c{min-height:104px;padding:8px 8px 10px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);overflow:hidden;}
 .cm-cal .c:nth-child(7n){border-right:0;}
-.cm-cal .c.out{background:#FAFBFD;}
-.cm-cal .c.out .n{color:#C5CAD8;}
-.cm-cal .n{font-size:13px;font-weight:700;color:var(--sub);display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;border-radius:50%;margin-bottom:4px;}
-.cm-cal .c.today .n{background:var(--ink);color:#fff;}
-.cm-cal .e{display:block;font-size:11.5px;font-weight:650;border-radius:5px;padding:2px 6px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cm-cal .c.out{background:#FBFBFE;}
+.cm-cal .c.out .n{color:#C9CDDD;}
+.cm-cal .n{font-size:13px;font-weight:700;color:var(--sub);display:inline-flex;width:25px;height:25px;align-items:center;justify-content:center;border-radius:50%;margin-bottom:4px;}
+.cm-cal .c.today .n{background:var(--blue);color:#fff;}
+.cm-cal .e{display:block;font-size:11.5px;font-weight:650;border-radius:7px;padding:2px 7px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cm-cal .more{font-size:11px;color:var(--mute);margin-top:3px;padding-left:4px;}
 
-.cm-tt{display:grid;grid-template-columns:44px repeat(5,minmax(0,1fr));background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;}
-.cm-tt .hd{font-size:12.5px;font-weight:700;color:var(--sub);text-align:center;padding:10px 0;border-bottom:1px solid var(--line);}
-.cm-tt .hd.on{color:var(--ink);background:linear-gradient(transparent 62%,var(--mark) 62%,var(--mark) 86%,transparent 86%);}
+.cm-tt{display:grid;grid-template-columns:44px repeat(5,minmax(0,1fr));background:#fff;border:1px solid var(--line);border-radius:20px;overflow:hidden;}
+.cm-tt .hd{font-size:12.5px;font-weight:700;color:var(--sub);text-align:center;padding:11px 0;border-bottom:1px solid var(--line);}
+.cm-tt .hd.on{color:var(--blue-deep);background:var(--blue-soft);}
 .cm-tt .hours div{height:60px;font-size:11px;color:var(--mute);text-align:right;padding:4px 8px 0 0;font-variant-numeric:tabular-nums;}
 .cm-tt .col{position:relative;border-left:1px solid var(--line);background-image:linear-gradient(var(--line) 1px,transparent 1px);background-size:100% 60px;}
-.cm-tt .blk{position:absolute;left:4px;right:4px;border-radius:9px;padding:7px 9px;overflow:hidden;}
+.cm-tt .blk{position:absolute;left:4px;right:4px;border-radius:12px;padding:8px 10px;overflow:hidden;}
 .cm-tt .blk b{display:block;font-size:12.5px;font-weight:750;line-height:1.3;}
 .cm-tt .blk span{font-size:11px;opacity:.85;}
 
-.cm-task{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px 14px 12px;margin-bottom:4px;}
-.cm-task .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.cm-task{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 15px 13px;margin-bottom:4px;}
+.cm-task .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;}
 .cm-task .b{font-size:14.5px;font-weight:750;letter-spacing:-.01em;line-height:1.4;}
 .cm-task .s{font-size:12px;color:var(--mute);margin-top:3px;}
-.cm-track{display:flex;gap:4px;margin-top:10px;}
-.cm-track i{flex:1;height:5px;border-radius:5px;background:#E9ECF4;}
-.cm-track i.on{background:var(--mark);}
-.cm-track i.now{background:#F0567A;}
+.cm-track{display:flex;gap:4px;margin-top:11px;}
+.cm-track i{flex:1;height:6px;border-radius:6px;background:#ECEEF6;}
+.cm-track i.on{background:var(--blue);opacity:.45;}
+.cm-track i.now{background:var(--hot);}
 .cm-colhd{font-size:13px;font-weight:750;color:var(--sub);margin:0 0 10px;display:flex;gap:6px;align-items:center;}
 .cm-colhd em{font-style:normal;font-size:12px;color:var(--mute);font-weight:600;}
 
-.cm-term{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px 16px;margin-bottom:8px;}
+.cm-term{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px 17px;margin-bottom:8px;}
 .cm-term .b{font-size:15px;font-weight:800;}
 .cm-term .o{font-size:13px;color:var(--blue);font-weight:650;margin-left:8px;}
 .cm-term p{font-size:13.5px;color:var(--sub);line-height:1.65;margin:5px 0 0;}
 .cm-steps{counter-reset:s;display:flex;gap:6px;margin:0 0 22px;padding:0;list-style:none;}
-.cm-steps li{counter-increment:s;flex:1;font-size:13px;font-weight:650;color:var(--mute);border-top:4px solid #E1E5EF;padding-top:8px;}
+.cm-steps li{counter-increment:s;flex:1;font-size:13px;font-weight:650;color:var(--mute);border-top:4px solid #E6E9F4;border-radius:2px;padding-top:8px;}
 .cm-steps li:before{content:counter(s) ". ";}
-.cm-steps li.on{color:var(--ink);border-color:var(--ink);}
+.cm-steps li.on{color:var(--ink);border-color:var(--blue);}
 .cm-steps li.done{color:var(--sub);border-color:var(--mark);}
-@media (max-width:760px){[data-testid="stMain"] .block-container{padding:1.2rem 1rem 5rem;}.cm-h1{font-size:26px;}.cm-cal .c{min-height:72px;padding:5px;}.cm-cal .e{font-size:10px;padding:1px 4px;}}
+@media (max-width:760px){[data-testid="stMain"] .block-container{padding:1.2rem 1rem 5rem;}.cm-h1{font-size:25px;}.cm-hero img{width:68px;height:68px;border-radius:18px;}.cm-hero b{font-size:30px;}.cm-cal .c{min-height:72px;padding:5px;}.cm-cal .e{font-size:10px;padding:1px 4px;}}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -292,6 +309,19 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ─────────────────────────────────────────────────────────────
 # 유틸
 # ─────────────────────────────────────────────────────────────
+def brand():
+    return (f'<div class="cm-brand"><img src="{LOGO}" alt="mate 로고"><div><b>mate</b>'
+            '<span>너의 하루를 챙기는 메이트</span></div></div>')
+
+
+def hero():
+    return f'<div class="cm-hero"><img src="{LOGO}" alt="mate 로고"><b>mate</b></div>'
+
+
+def cheer(title, sub=""):
+    H(f'<div class="cm-cheer"><img src="{LOGO}" alt=""><div><b>{esc(title)}</b><span>{esc(sub)}</span></div></div>')
+
+
 def H(markup):
     st.markdown(markup, unsafe_allow_html=True)
 
@@ -509,10 +539,17 @@ def _err_detail(r):
         return ""
 
 
+@st.cache_resource(show_spinner=False)
+def _ai_memo():
+    """모든 접속자가 함께 쓰는 기억: 쓸 수 있는 모델 목록과 빠른 설정."""
+    return {"models": [], "at": 0.0, "think": {}}
+
+
 def gemini_models(key):
-    """이 키로 지금 쓸 수 있는 모델을 구글에 물어보고, 쓸 만한 순서로 돌려준다."""
-    if st.session_state.get("gm_list"):
-        return st.session_state.gm_list, ""
+    """이 키로 지금 쓸 수 있는 모델을 구글에 물어보고, 쓸 만한 순서로 돌려준다. 한 시간 동안 기억한다."""
+    memo = _ai_memo()
+    if memo["models"] and now().timestamp() - memo["at"] < 3600:
+        return memo["models"], ""
     try:
         r = requests.get(f"{GEMINI_API}/models", headers={"x-goog-api-key": key},
                          params={"pageSize": 1000}, timeout=30)
@@ -532,61 +569,121 @@ def gemini_models(key):
         score = ver
         score += 100 if "flash" in name else 0
         score -= 50 if "lite" in name else 0
-        score -= 0.05 if re.search(r"preview|exp", name) else 0
+        score -= 0.6 if re.search(r"preview|exp", name) else 0
         score += 0.01 if "latest" in name else 0
         scored.append((score, name))
     names = [n for _, n in sorted(scored, reverse=True)]
     if names:
-        st.session_state.gm_list = names
+        memo["models"], memo["at"] = names, now().timestamp()
     return names, "" if names else "이 키로 쓸 수 있는 Gemini 모델이 없어요."
 
 
-def gemini_json(data, mime, prompt):
-    """이미지(또는 PDF)와 지시문을 보내 JSON을 돌려받는다. (결과, 오류문구)"""
+THINK_VARIANTS = [{"thinkingBudget": 0}, {"thinkingLevel": "minimal"}, {"thinkingLevel": "low"}, None]
+
+
+def shrink_image(data, mime):
+    """큰 캡처는 줄여서 보낸다. 실패하면 원본 그대로."""
+    if not str(mime or "").startswith("image/"):
+        return data, mime
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(data))
+        if max(im.size) <= 1400 and len(data) < 600_000:
+            return data, mime
+        im = im.convert("RGB")
+        im.thumbnail((1400, 1400))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return data, mime
+
+
+def gemini_text(body):
+    """요청 본문을 보내 답변 글자를 돌려받는다. (글자, 오류문구)
+    답이 빨리 오도록 '생각' 단계를 가장 짧게 두는 설정을 먼저 시도하고, 모델이 거부하면 다음 설정으로 넘어간다."""
     key = _secret("GEMINI_API_KEY")
     if not key:
         return None, "API 키가 설정되지 않았어요."
     if _bad_key(key):
         return None, ("Secrets의 GEMINI_API_KEY 값에 한글이나 빈칸, 줄바꿈이 섞여 있어요. "
                       "AI Studio에서 키를 다시 복사해 따옴표 안에 붙여 넣어 주세요.")
-    body = {"contents": [{"parts": [
-        {"inline_data": {"mime_type": mime or "image/png", "data": base64.b64encode(data).decode()}},
-        {"text": prompt}]}],
-        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}
+    memo = _ai_memo()
     custom = _secret("GEMINI_MODEL")
     found, list_err = gemini_models(key)
     order = []
-    for m in ([custom] if custom else []) + found[:6] + GEMINI_MODELS:
+    for m in ([custom] if custom else []) + found[:5] + GEMINI_MODELS:
         if m and m not in order:
             order.append(m)
     err = list_err or "응답을 받지 못했어요."
     for model in order:
-        try:
-            r = requests.post(f"{GEMINI_API}/models/{model}:generateContent",
-                              headers={"x-goog-api-key": key}, json=body, timeout=90)
-        except Exception as e:
-            err = _net_err(e)
-            continue
-        if r.status_code == 200:
+        start = memo["think"].get(model, 0)
+        for vi in range(start, len(THINK_VARIANTS)):
+            cfg = dict(body.get("generationConfig") or {})
+            if THINK_VARIANTS[vi]:
+                cfg["thinkingConfig"] = THINK_VARIANTS[vi]
             try:
-                parts = r.json()["candidates"][0]["content"]["parts"]
-                text = "".join(p.get("text", "") for p in parts).strip()
-                text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-                st.session_state.gm_list = [model] + [m for m in found if m != model]
-                return json.loads(text), ""
-            except Exception:
-                err = "AI 응답을 해석하지 못했어요. 한 번 더 시도해 주세요."
+                r = requests.post(f"{GEMINI_API}/models/{model}:generateContent",
+                                  headers={"x-goog-api-key": key}, json={**body, "generationConfig": cfg}, timeout=90)
+            except Exception as e:
+                err = _net_err(e)
+                break
+            if r.status_code == 400 and THINK_VARIANTS[vi]:
                 continue
-        if r.status_code in (401, 403):
-            return None, f"API 키에 문제가 있어요 (코드 {r.status_code}). Secrets의 키를 확인해 주세요. {_err_detail(r)}"
-        if r.status_code == 429:
-            err = "무료 사용 한도를 잠시 넘었어요. 1분쯤 뒤에 다시 시도해 주세요."
-            continue
-        if r.status_code == 404:
-            err = list_err or f"모델 {model}을(를) 쓸 수 없어요. {_err_detail(r)}"
-            continue
-        err = f"AI 요청이 실패했어요 (모델 {model}, 코드 {r.status_code}). {_err_detail(r)}"
+            if r.status_code == 200:
+                try:
+                    parts = r.json()["candidates"][0]["content"]["parts"]
+                    text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+                except Exception:
+                    text = ""
+                if text:
+                    memo["think"][model] = vi
+                    if model in memo["models"]:
+                        memo["models"] = [model] + [m for m in memo["models"] if m != model]
+                    return text, ""
+                err = "AI가 빈 답을 보냈어요. 한 번 더 시도해 주세요."
+                break
+            if r.status_code in (401, 403):
+                return None, f"API 키에 문제가 있어요 (코드 {r.status_code}). Secrets의 키를 확인해 주세요. {_err_detail(r)}"
+            if r.status_code == 429:
+                err = "무료 사용 한도를 잠시 넘었어요. 1분쯤 뒤에 다시 시도해 주세요."
+            elif r.status_code == 404:
+                err = list_err or f"모델 {model}을(를) 쓸 수 없어요. {_err_detail(r)}"
+            else:
+                err = f"AI 요청이 실패했어요 (모델 {model}, 코드 {r.status_code}). {_err_detail(r)}"
+            break
     return None, err
+
+
+def _loose_json(text):
+    t = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+    m = re.search(r"\{.*\}|\[.*\]", t, re.S)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+    return None
+
+
+def gemini_json(data, mime, prompt):
+    """이미지(또는 PDF)와 지시문을 보내 JSON을 돌려받는다. (결과, 오류문구)"""
+    data, mime = shrink_image(data, mime)
+    body = {"contents": [{"parts": [
+        {"inline_data": {"mime_type": mime or "image/png", "data": base64.b64encode(data).decode()}},
+        {"text": prompt}]}],
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}
+    text, err = gemini_text(body)
+    if err:
+        return None, err
+    out = _loose_json(text)
+    if out is None:
+        return None, "AI 응답을 해석하지 못했어요. 한 번 더 시도해 주세요."
+    return out, ""
 
 
 def _hhmm(v):
@@ -847,24 +944,16 @@ def notice_sample():
             "date": d, "time": "23:59", "how": "LMS 과제함에 PDF 업로드", "size": "A4 3매 이내"}
 
 
-def respond_to_capture(upload=None):
-    if upload is not None and ai_ready():
-        with st.spinner("자료를 읽고 있어요"):
-            cand, err = read_notice(upload.getvalue(), getattr(upload, "type", "") or "image/png")
-        if err:
-            say("assistant", err)
-            return
-        st.session_state.candidates[cand["id"]] = cand
-        say("assistant", "올려 주신 자료에서 일정을 찾았어요. 맞는지 확인해 주세요.", cand=cand["id"])
-        return
+def respond_to_capture(had_file=False):
+    """AI 없이 공지 인식 과정을 예시로 보여 준다."""
     n = notice_sample()
     cand = {"id": uid(), "title": n["title"], "category": "과제", "course": n["course"],
             "date": n["date"].isoformat(), "time": n["time"], "location": "",
             "details": f"제출: {n['how']}\n분량: {n['size']}", "source": "공지 캡처", "state": "확인 필요"}
     st.session_state.candidates[cand["id"]] = cand
     pre = ""
-    if upload is not None:
-        pre = ("AI 키가 연결되지 않아 올린 자료를 실제로 읽지는 못했어요. "
+    if had_file:
+        pre = ("올린 자료를 실제로 읽지는 못했어요. "
                "대신 예시 공지로 인식 과정을 보여 드릴게요.\n\n")
     say("assistant", pre + "공지에서 과목, 과제 내용, 마감일, 제출 방식을 찾았어요. 맞는지 확인해 주세요.",
         cand=cand["id"])
@@ -927,6 +1016,182 @@ def respond(text):
         "- “이 과제 이제 시작할래”\n- “경로 갈등이 무슨 뜻이야?”")
 
 
+# ─────────────────────────────────────────────────────────────
+# AI 대화: 일정 등록부터 과제 해결까지 한 대화에서 (Gemini 키가 있을 때)
+# ─────────────────────────────────────────────────────────────
+def focus_task():
+    e = get_event(st.session_state.get("study_id") or "")
+    return e if e and e["status"] != "완료" else None
+
+
+def ai_system():
+    ss = st.session_state
+    p = ss.profile
+    t = today()
+    todo = [e for e in st.session_state.events if not e["weekly"] and e["category"] != "학사" and dparse(e["date"])
+            and dparse(e["date"]) >= t - timedelta(days=7)]
+    todo.sort(key=lambda e: e["date"])
+    lines = [f'- id={e["id"]} | {e["category"]} | {e["course"] or "과목 미지정"} | {e["title"]} | '
+             f'{e["date"]} {e["time"]} | {e["status"]}' + (f' | 메모: {e["details"]}' if e["details"] else "")
+             for e in todo[:25]] or ["- 없음"]
+    acad = [f'- {e["title"]} {e["date"]}' + (f'~{e["end"]}' if e["end"] else "")
+            for e in ss.events if e["category"] == "학사"] or ["- 없음"]
+    day = lambda d: ", ".join(f'{e["time"] or "종일"} {e["title"]}' for e in events_on(d)) or "없음"
+    f = focus_task()
+    focus = (f'id={f["id"]} {f["course"]} {f["title"]} (마감 {f["date"]} {f["time"]})'
+             + (f' 메모: {f["details"]}' if f["details"] else "")) if f else "없음"
+    lang = p.get("lang", "한국어")
+    return f"""너는 mate다. 한국 대학생의 일정과 학업을 한 대화 안에서 돕는 비서다.
+
+[말투]
+친근한 해요체로 짧게 쓴다. 한 번에 질문은 하나만 한다. 불필요한 인사와 반복을 줄인다.
+답변 언어: {lang}. 한국어가 아니면 그 언어로 답하고, 전공 용어는 한국어 원어를 괄호 안에 함께 적는다.
+
+[하는 일 1: 일정 등록]
+사용자가 과제, 시험, 팀플, 약속 같은 일정을 말하거나 공지·캡처·PDF를 첨부하면 events 배열에 담는다.
+날짜는 오늘을 기준으로 계산해 YYYY-MM-DD로 쓴다. 날짜를 알 수 없으면 events에 넣지 말고 날짜를 물어본다.
+과제의 마감 시간이 없으면 23:59로 둔다. 이미 등록된 일정과 같은 일정이면 다시 넣지 말고 이미 있다고 알려 준다.
+events에 넣은 일정은 화면에 확인 카드로 따로 표시되고 사용자가 버튼을 눌러야 등록된다.
+그러니 reply에서는 세부 내용을 되풀이하지 말고 카드를 확인해 달라고만 짧게 말한다. "등록했어요"라고 말하지 않는다.
+
+[하는 일 2: 과제와 시험 함께 하기]
+사용자가 과제나 시험 공부를 시작하겠다고 하면 start_id에 그 일정의 id를 넣는다. 어떤 것인지 불분명하면 물어본다.
+그다음부터는 선택지를 늘어놓지 말고 대화로 한 단계씩 진행한다.
+과제: 요구사항 확인 → 주제 정하기(후보를 두세 개 제안하고 사용자의 생각을 묻는다) → 개요 → 본문 작성 또는 문제 풀이 → 검토.
+시험: 범위 확인 → 핵심 개념 설명 → 질문을 하나씩 내고 답을 듣고 피드백.
+사용자가 스스로 생각하도록 질문을 던지되, 예시 문단이나 풀이를 요청하면 구체적으로 써 준다.
+한 번의 답은 한 단계만 다루고, 끝에 다음에 할 일을 한 문장으로 묻는다.
+교수의 요구사항, 평가 기준, 통계 수치, 출처는 지어내지 않는다. 모르면 사용자에게 확인을 부탁한다.
+사용자가 제출했다거나 끝냈다고 하면 done_ids에 그 id를 넣는다.
+
+[하는 일 3: 강의자료와 용어]
+강의자료를 붙여 넣거나 첨부하면 요약하고, 어려운 전공 용어를 쉬운 말로 풀어 준다.
+
+[지금 상황]
+오늘: {t.isoformat()} ({DAYS[t.weekday()]}요일), 지금 시각 {now().strftime("%H:%M")}
+사용자: {p.get("name", "")} / {p.get("school", "")} {p.get("major", "")} {p.get("grade", "")} / {p.get("kind", "")}
+수강 과목: {", ".join(courses()) or "없음"}
+오늘 일정: {day(t)}
+내일 일정: {day(t + timedelta(days=1))}
+등록된 일정(수업 제외):
+{chr(10).join(lines)}
+학사일정:
+{chr(10).join(acad)}
+지금 같이 하고 있는 과제: {focus}
+
+[출력 형식]
+아래 키를 가진 JSON 객체 하나만 출력한다. 다른 글은 쓰지 않는다.
+"reply": 사용자에게 보여 줄 답(마크다운 가능),
+"events": 등록할 일정 후보 배열. 없으면 []. 각 항목은 "title"(20자 이내), "course"(수강 과목 중 해당하는 이름 그대로, 없으면 ""),
+  "category"("과제","시험","팀플","수업","학사","기타" 중 하나), "date"("YYYY-MM-DD"), "time"("HH:MM" 또는 ""), "location", "details"(제출 방식·분량·범위 등, 없으면 ""),
+"start_id": 같이 시작할 일정의 id. 없으면 "",
+"done_ids": 완료 처리할 일정 id 배열. 없으면 []."""
+
+
+def ai_history():
+    turns = []
+    for m in st.session_state.messages[-24:]:
+        role = "model" if m["role"] == "assistant" else "user"
+        text = m["content"]
+        for cid in ([m["cand"]] if m.get("cand") else []) + list(m.get("cands") or []):
+            c = st.session_state.candidates.get(cid)
+            if c:
+                text += f'\n(화면에 표시한 일정 카드: {c["title"]} {c["date"]} {c["time"]} · 상태: {c["state"]})'
+        if turns and turns[-1]["role"] == role:
+            turns[-1]["parts"][0]["text"] += "\n\n" + text
+        else:
+            turns.append({"role": role, "parts": [{"text": text}]})
+    if turns and turns[0]["role"] == "model":
+        turns.insert(0, {"role": "user", "parts": [{"text": "(앱을 열었어요)"}]})
+    return turns
+
+
+def ai_chat(upload=None):
+    """마지막 사용자 메시지에 AI로 답한다. 성공하면 True."""
+    ss = st.session_state
+    turns = ai_history()
+    if not turns or turns[-1]["role"] != "user":
+        return False
+    if upload:
+        udata, umime = shrink_image(upload["data"], upload["mime"])
+        turns[-1]["parts"].insert(0, {"inline_data": {"mime_type": umime or "image/png",
+                                                      "data": base64.b64encode(udata).decode()}})
+    body = {"system_instruction": {"parts": [{"text": ai_system()}]}, "contents": turns,
+            "generationConfig": {"temperature": 0.5, "responseMimeType": "application/json"}}
+    text, err = gemini_text(body)
+    if err:
+        ss.ai_err = err
+        return False
+    out = _loose_json(text)
+    if isinstance(out, list):
+        out = next((x for x in out if isinstance(x, dict)), None)
+    if not isinstance(out, dict):
+        out = {"reply": text}
+    cands = []
+    for ev in out.get("events") or []:
+        if not isinstance(ev, dict) or not dparse(ev.get("date")):
+            continue
+        c = {"id": uid(), "title": str(ev.get("title") or "새 일정").strip()[:40],
+             "category": ev.get("category") if ev.get("category") in CATS else "기타",
+             "course": str(ev.get("course") or "").strip(), "date": dparse(ev["date"]).isoformat(),
+             "time": _hhmm(ev.get("time")), "location": str(ev.get("location") or "").strip(),
+             "details": str(ev.get("details") or "").strip(),
+             "source": "공지 캡처" if upload else "대화", "state": "확인 필요"}
+        ss.candidates[c["id"]] = c
+        cands.append(c["id"])
+    for i in out.get("done_ids") or []:
+        e = get_event(str(i))
+        if e:
+            e["status"] = "완료"
+            if ss.get("study_id") == e["id"]:
+                ss.study_id = ""
+    e = get_event(str(out.get("start_id") or ""))
+    if e and e["status"] != "완료":
+        ss.study_id = e["id"]
+        if e["status"] == "시작 전":
+            e["status"] = "진행 중"
+    reply = str(out.get("reply") or "").strip() or ("일정을 찾았어요. 아래 카드를 확인해 주세요." if cands else "다시 한 번 말해 줄래요?")
+    say("assistant", reply, cands=cands)
+    return True
+
+
+def answer(pending):
+    """대기 중인 사용자 메시지에 답한다. AI가 안 되면 규칙 기반으로 답한다."""
+    ss = st.session_state
+    text, upload = pending.get("text", ""), pending.get("file")
+    if pending.get("sample"):
+        respond_to_capture()
+        return
+    if ai_ready():
+        ss.ai_err = ""
+        if ai_chat(upload):
+            return
+        say("assistant", f"AI 답변을 받지 못했어요. {ss.get('ai_err', '')} 우선 기본 방식으로 답할게요.")
+    if upload:
+        respond_to_capture(had_file=True)
+    elif text:
+        respond(text)
+
+
+def ask(text, **pending):
+    """사용자 메시지를 대화에 올리고 답변을 예약한다."""
+    say("user", text, **({"shot": True} if pending.get("sample") else {}))
+    st.session_state.pending = {"text": text, **pending}
+
+
+def start_study(e):
+    """과제 하나를 골라 대화에서 같이 시작한다."""
+    ss = st.session_state
+    if e["status"] == "시작 전":
+        e["status"] = "진행 중"
+    ss.study_id = e["id"]
+    if ai_ready():
+        ask(f"{e['course']} {e['title']} 같이 시작할래".strip())
+        ss.page = "대화"
+    else:
+        ss.page = "함께 학습"
+
+
 def greeting():
     p = st.session_state.profile
     h = now().hour
@@ -958,7 +1223,7 @@ def ensure_greeting():
 # ─────────────────────────────────────────────────────────────
 # 로그인(구글)과 저장(Supabase) · Secrets에 값이 있을 때만 동작
 # ─────────────────────────────────────────────────────────────
-SAVE_KEYS = ["onboarded", "profile", "events", "messages", "candidates", "greeted",
+SAVE_KEYS = ["demo", "onboarded", "profile", "events", "messages", "candidates", "greeted",
              "stages", "plan_done", "tt_rows", "study_id"]
 
 
@@ -1077,10 +1342,10 @@ def leave_guest():
 def page_login():
     left, right = st.columns([5, 4], gap="large")
     with left:
-        H('<div class="cm-brand"><div class="cm-logo"></div><div><b>Campus Mate</b>'
-          '<span>말하면 정리되는 캠퍼스 일정</span></div></div>')
-        H('<h1 class="cm-h1">공지는 캡처하고, 일정은 말로.<br><mark>캘린더는 알아서 채워져요.</mark></h1>'
-          '<p class="cm-lead">로그인하면 시간표와 일정이 저장돼서, 다음에 들어와도 그대로 이어져요.</p>')
+        H(hero())
+        H('<h1 class="cm-h1">너의 하루를 챙기는<br><mark>가장 가까운 메이트</mark></h1>'
+          '<p class="cm-lead">공지는 캡처하고 일정은 말로 알려 주세요. 캘린더는 알아서 채워지고, 과제를 시작할 땐 같이 해요. '
+          '로그인하면 다음에 들어와도 그대로 이어져요.</p>')
         a, b, _ = st.columns([2, 2, 2])
         a.button("Google로 로그인", type="primary", on_click=st.login, width="stretch")
         b.button("로그인 없이 둘러보기", on_click=enter_guest, width="stretch")
@@ -1101,6 +1366,7 @@ def page_login():
 def init():
     ss = st.session_state
     ss.setdefault("onboarded", False)
+    ss.setdefault("demo", False)
     ss.setdefault("ob_step", 1)
     ss.setdefault("page", "대화")
     ss.setdefault("profile", {"name": "", "school": "", "major": "", "grade": "", "kind": "한국인 학생",
@@ -1114,10 +1380,23 @@ def init():
     ss.setdefault("plan_done", {})
     ss.setdefault("cal_ym", (today().year, today().month))
     ss.setdefault("tt_rows", None)
+    ss.setdefault("pending", None)
 
 
-def finish_onboarding(with_samples=True):
+def strip_samples():
+    """직접 가입한 사용자의 일정에서 예시 과제·팀플을 뺀다."""
     ss = st.session_state
+    if ss.get("demo") or not ss.get("events"):
+        return
+    keys = {(e["title"], e["details"]) for e in sample_tasks()}
+    kept = [e for e in ss.events if (e.get("title"), e.get("details")) not in keys]
+    if len(kept) != len(ss.events):
+        ss.events = kept
+
+
+def finish_onboarding(with_samples=False):
+    ss = st.session_state
+    ss.demo = bool(with_samples)
     rows = ss.tt_rows if ss.tt_rows is not None else SAMPLE_TIMETABLE
     ss.events = academic_events(ss.profile["school"]) + class_events(rows)
     if with_samples:
@@ -1150,9 +1429,8 @@ def page_onboarding():
     step = ss.ob_step
     left, right = st.columns([5, 4], gap="large")
     with left:
-        H('<div class="cm-brand"><div class="cm-logo"></div><div><b>Campus Mate</b>'
-          '<span>말하면 정리되는 캠퍼스 일정</span></div></div>')
-        H('<h1 class="cm-h1">공지는 캡처하고, 일정은 말로.<br><mark>캘린더는 알아서 채워져요.</mark></h1>'
+        H(brand())
+        H('<h1 class="cm-h1">너의 하루를 챙기는<br><mark>가장 가까운 메이트</mark></h1>'
           '<p class="cm-lead">LMS 공지, 단톡방, 강의계획서에 흩어진 과제와 시험을 대화 한 번으로 모으고, '
           '마감 3일 전부터 챙겨 주고, 시작할 땐 같이 공부해요. 유학생에게는 전공 용어를 모국어로 풀어 줘요.</p>')
         labels = ["내 정보", "학사일정·시간표", "확인"]
@@ -1250,14 +1528,12 @@ def page_onboarding():
               f'<dt>학사일정</dt><dd>{len(academic_events(p["school"]))}건 등록 예정</dd>'
               f'<dt>수업</dt><dd>{esc(", ".join(names))} (매주 반복 {len([r for r in rows if r.get("요일") in DAYS])}건)</dd>'
               '<dt>알림</dt><dd>마감 3일 전, 2일 전, 1일 전, 당일</dd></dl></div>')
-            with_s = st.checkbox("예시 과제와 팀플도 넣어서 둘러보기", value=True,
-                                 help="알림과 함께 학습 기능을 바로 볼 수 있어요. 설정에서 언제든 지울 수 있어요.")
             a, b, _ = st.columns([1, 2, 3])
             if a.button("이전"):
                 ss.ob_step = 2
                 st.rerun()
-            if b.button("Campus Mate 시작하기", type="primary"):
-                finish_onboarding(with_s)
+            if b.button("mate 시작하기", type="primary"):
+                finish_onboarding(False)
                 st.rerun()
 
     with right:
@@ -1330,7 +1606,8 @@ def register(c):
     c["state"] = "등록됨"
     if c["category"] in ("과제", "시험"):
         first = dparse(c["date"]) - timedelta(days=3)
-        say("assistant", f"등록했어요. {fmt_date(first)}부터 마감일까지 매일 알려 드릴게요. "
+        when = "오늘" if first <= today() else fmt_date(first)
+        say("assistant", f"등록했어요. {when}부터 마감일까지 매일 알려 드릴게요. "
             "시작하고 싶을 때 “이 과제 시작할래”라고 말해 주세요.")
     else:
         say("assistant", "캘린더에 등록했어요.")
@@ -1344,63 +1621,74 @@ def shot_html():
 
 
 def ex_capture():
-    say("user", "이 공지 캡처 등록해 줘", shot=True)
-    respond_to_capture()
+    ask("이 공지 캡처 등록해 줘", sample=True)
 
 
 def ex_text():
-    msg = "다음 주 수요일 오후 2시에 유통 팀플 회의 있어"
-    say("user", msg)
-    respond(msg)
+    ask("다음 주 수요일 오후 2시에 유통 팀플 회의 있어")
 
 
 def ex_start():
-    msg = "이 과제 이제 시작할래!"
-    say("user", msg)
-    respond(msg)
+    ask("이 과제 이제 시작할래!")
 
 
 def ex_term():
-    msg = "경로 갈등이 무슨 뜻이야?"
-    say("user", msg)
-    respond(msg)
+    ask("경로 갈등이 무슨 뜻이야?")
+
+
+def end_focus():
+    st.session_state.study_id = ""
 
 
 def page_chat():
     ss = st.session_state
     ensure_greeting()
-    H('<h1 class="cm-h1">무엇이든 <mark>말로 정리해요</mark></h1>'
-      '<p class="cm-lead">과제나 일정이 생기면 말하거나 공지 캡처를 올려 주세요. 확인만 하면 캘린더에 들어가요.</p>')
+    prompt = st.chat_input("일정을 말하거나, 과제를 같이 시작하자고 해 보세요. 공지 캡처도 첨부할 수 있어요.",
+                           accept_file=True, file_type=["png", "jpg", "jpeg", "pdf"])
+    if prompt:
+        text = (getattr(prompt, "text", None) or (prompt if isinstance(prompt, str) else "")).strip()
+        files = getattr(prompt, "files", None) or []
+        if files:
+            f = files[0]
+            say("user", (text + "\n\n" if text else "") + f"첨부: {f.name}")
+            ss.pending = {"text": text, "file": {"data": f.getvalue(), "mime": getattr(f, "type", "") or "image/png"}}
+        elif text:
+            ask(text)
+
+    H('<h1 class="cm-h1">일정부터 과제까지 <mark>여기서 말로</mark></h1>'
+      '<p class="cm-lead">일정이 생기면 말하거나 공지 캡처를 올려 주세요. 과제를 시작할 때도 여기서 같이 해요.</p>')
+    f = focus_task()
+    if f:
+        a, b = st.columns([5, 1.2])
+        a.markdown(f'<div class="cm-alert" style="margin:0"><div class="k">지금 같이 하는 중</div>'
+                   f'<div class="b">{esc(f["course"])} {esc(f["title"])}</div>'
+                   f'<div class="s">{fmt_date(dparse(f["date"]))} {esc(f["time"])} 마감 · {dday(dparse(f["date"]))}</div></div>',
+                   unsafe_allow_html=True)
+        b.button("여기까지 하기", on_click=end_focus, width="stretch")
     for m in ss.messages:
-        with st.chat_message(m["role"], avatar="📎" if m["role"] == "assistant" else "🙂"):
+        with st.chat_message(m["role"], avatar=LOGO_IMG if m["role"] == "assistant" else ":material/person:"):
             if m.get("shot"):
                 H(shot_html())
             st.markdown(m["content"])
-            if m.get("cand") and m["cand"] in ss.candidates:
-                candidate_card(ss.candidates[m["cand"]])
-            if m.get("study") and get_event(m["study"]):
+            for cid in ([m["cand"]] if m.get("cand") else []) + list(m.get("cands") or []):
+                if cid in ss.candidates:
+                    candidate_card(ss.candidates[cid])
+            if m.get("study") and get_event(m["study"]) and not ai_ready():
                 if st.button("함께 학습 열기", key="st_" + m["id"], type="primary"):
                     go("함께 학습", study_id=m["study"])
                     st.rerun()
+    if ss.get("pending"):
+        pending, ss.pending = ss.pending, None
+        with st.chat_message("assistant", avatar=LOGO_IMG):
+            with st.spinner("생각하고 있어요"):
+                answer(pending)
+        st.rerun()
     H('<p class="cm-note" style="margin:14px 0 6px">이렇게 말해 보세요</p>')
     a, b, c, d, _ = st.columns([1, 1, 1, 1, 1.6])
     a.button("공지 캡처 올리기", on_click=ex_capture, width="stretch")
     b.button("말로 일정 등록", on_click=ex_text, width="stretch")
     c.button("과제 시작할래", on_click=ex_start, width="stretch")
     d.button("용어 물어보기", on_click=ex_term, width="stretch")
-
-    prompt = st.chat_input("예: 금요일까지 소비자행동론 레포트 제출 (공지 캡처도 첨부할 수 있어요)",
-                           accept_file=True, file_type=["png", "jpg", "jpeg", "pdf"])
-    if prompt:
-        text = (getattr(prompt, "text", None) or (prompt if isinstance(prompt, str) else "")).strip()
-        files = getattr(prompt, "files", None) or []
-        if files:
-            say("user", (text + "\n\n" if text else "") + f"첨부: {files[0].name}")
-            respond_to_capture(files[0])
-        elif text:
-            say("user", text)
-            respond(text)
-        st.rerun()
 
 
 def page_today():
@@ -1412,19 +1700,18 @@ def page_today():
     with left:
         H('<div class="cm-h2">마감 알림</div>')
         if not al:
-            H('<div class="cm-empty">마감 3일 안에 들어온 과제나 시험이 없어요.</div>')
+            cheer("지금은 급한 마감이 없어요", "마감 3일 전이 되면 여기서 먼저 알려 드릴게요.")
         for e, k, title, sub in al:
             H(f'<div class="cm-alert"><div class="k">{esc(k)} · {esc(title)}</div>'
               f'<div class="b">{esc(e["course"])} {esc(e["title"])}</div>'
               f'<div class="s">{fmt_date(dparse(e["date"]))} {esc(e["time"])} 마감. {esc(sub)}</div></div>')
             a, b, _ = st.columns([1.3, 1.3, 2])
             if a.button("같이 시작하기" if e["status"] == "시작 전" else "이어서 하기", key="al_s_" + e["id"], width="stretch"):
-                if e["status"] == "시작 전":
-                    e["status"] = "진행 중"
-                go("함께 학습", study_id=e["id"])
+                start_study(e)
                 st.rerun()
             if b.button("제출했어요", key="al_d_" + e["id"], width="stretch"):
                 e["status"] = "완료"
+                st.session_state.praise = e["title"]
                 st.rerun()
             st.write("")
     with right:
@@ -1467,8 +1754,8 @@ def ics_text():
     def clean(s):
         return str(s).replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
 
-    L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Campus Mate//Demo//KO", "CALSCALE:GREGORIAN",
-         "X-WR-CALNAME:Campus Mate", "X-WR-TIMEZONE:Asia/Seoul"]
+    L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//mate//KO", "CALSCALE:GREGORIAN",
+         "X-WR-CALNAME:mate", "X-WR-TIMEZONE:Asia/Seoul"]
     for e in st.session_state.events:
         d = dparse(e["date"])
         if not d:
@@ -1568,7 +1855,7 @@ def page_calendar():
                                                course="" if course == "미지정" else course, details=det.strip()))
                     st.rerun()
         st.download_button("캘린더 파일(.ics) 내려받기", data=ics_text().encode("utf-8"),
-                           file_name="campus_mate.ics", mime="text/calendar", width="stretch")
+                           file_name="mate.ics", mime="text/calendar", width="stretch")
         H('<p class="cm-note">내려받은 파일을 구글 캘린더나 애플 캘린더의 “가져오기”에 넣으면 일정과 3일 전 알림이 그대로 들어가요.</p>')
 
 
@@ -1647,16 +1934,15 @@ def task_card(e):
     elif e["status"] == "진행 중":
         if a.button("완료", key="d_" + e["id"], width="stretch"):
             e["status"] = "완료"
+            st.session_state.praise = e["title"]
             st.rerun()
     else:
         if a.button("되돌리기", key="u_" + e["id"], width="stretch"):
             e["status"] = "진행 중"
             st.rerun()
     if e["status"] != "완료":
-        if b.button("함께 학습", key="g_" + e["id"], width="stretch"):
-            if e["status"] == "시작 전":
-                e["status"] = "진행 중"
-            go("함께 학습", study_id=e["id"])
+        if b.button("같이 하기", key="g_" + e["id"], width="stretch"):
+            start_study(e)
             st.rerun()
     with c.popover("더보기"):
         st.caption(e["details"] or "메모가 없어요.")
@@ -1670,9 +1956,9 @@ def page_tasks():
     items = todo_items()
     left = len([e for e in items if e["status"] != "완료"])
     H(f'<h1 class="cm-h1">끝내야 할 일 <mark>{left}개</mark></h1>'
-      '<p class="cm-lead">막대 네 칸은 마감 3일 전, 2일 전, 1일 전, 당일 알림이에요. 지나간 알림은 노란색, 오늘 알림은 분홍색으로 보여요.</p>')
+      '<p class="cm-lead">막대 네 칸은 마감 3일 전, 2일 전, 1일 전, 당일 알림이에요. 지나간 알림은 파란색, 오늘 알림은 분홍색으로 보여요.</p>')
     if not items:
-        st.info("등록된 과제나 시험이 없어요. ‘대화’ 화면에서 말로 등록해 보세요.")
+        cheer("등록된 과제나 시험이 없어요", "대화 화면에서 말로 알려 주면 여기에 모여요.")
         return
     cols = st.columns(3, gap="medium")
     for col, status in zip(cols, STATUS):
@@ -1840,13 +2126,13 @@ def page_settings():
         st.write("")
         H('<div class="cm-h2">외부 캘린더</div>')
         st.download_button("캘린더 파일(.ics) 내려받기", data=ics_text().encode("utf-8"),
-                           file_name="campus_mate.ics", mime="text/calendar")
+                           file_name="mate.ics", mime="text/calendar")
         st.write("")
         H('<div class="cm-h2">데모 초기화</div>')
         st.button("처음부터 다시 시작", on_click=reset_all)
     st.divider()
     H('<p class="cm-note">사진 인식: ' + ('AI 연결됨. 시간표와 공지 캡처를 실제로 읽어요.' if ai_ready() else 'AI 키 없음. 예시 데이터로 동작해요.')
-      + ' 대화 이해는 규칙 기반이고 학사일정은 예시 데이터입니다. '
+      + ' ' + ('대화도 AI가 이해하고 답해요.' if ai_ready() else '대화 이해는 규칙 기반이에요.') + ' 학사일정은 예시 데이터입니다. '
       + ('로그인 중이라 내용이 자동 저장돼요.' if logged_in() and st.session_state.get('store_ok') else '지금은 저장되지 않아서 창을 닫으면 내용이 사라져요.') + '</p>')
 
 
@@ -1875,10 +2161,13 @@ def render():
         H(hide)
         page_onboarding()
         return
+    strip_samples()
     with st.sidebar:
-        H('<div class="cm-brand"><div class="cm-logo"></div><div><b>Campus Mate</b><span>말하면 정리되는 캠퍼스 일정</span></div></div>')
+        H(brand())
         n_alert = len(alerts())
         for name, icon, _ in NAV:
+            if name == "함께 학습" and ai_ready():
+                continue
             label = f"{name}  ({n_alert})" if name == "오늘 할 일" and n_alert else name
             st.button(label, key="nav_" + name, icon=icon, width="stretch",
                       type="primary" if ss.page == name else "secondary", on_click=go, args=(name,))
@@ -1898,6 +2187,11 @@ def render():
             st.button("로그인하기", key="to_login", icon=":material/login:", on_click=leave_guest, width="stretch")
     if ss.get("store_msg"):
         st.warning(ss.store_msg)
+    if ss.get("praise"):
+        st.toast(f"수고했어요! ‘{ss.praise}’ 끝!", icon="🎓")
+        ss.praise = ""
+    if ss.page == "함께 학습" and ai_ready():
+        ss.page = "대화"
     dict((n, f) for n, _, f in NAV).get(ss.page, page_chat)()
 
 
