@@ -941,6 +941,143 @@ def ensure_greeting():
 
 
 # ─────────────────────────────────────────────────────────────
+# 로그인(구글)과 저장(Supabase) · Secrets에 값이 있을 때만 동작
+# ─────────────────────────────────────────────────────────────
+SAVE_KEYS = ["onboarded", "profile", "events", "messages", "candidates", "greeted",
+             "stages", "plan_done", "tt_rows", "study_id"]
+
+
+def auth_on():
+    try:
+        a = st.secrets.get("auth", None)
+        return bool(a and a.get("client_id") and a.get("client_secret"))
+    except Exception:
+        return False
+
+
+def logged_in():
+    if not auth_on():
+        return False
+    try:
+        return bool(st.user.is_logged_in)
+    except Exception:
+        return False
+
+
+def user_email():
+    try:
+        return str(getattr(st.user, "email", "") or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def user_name():
+    try:
+        return str(getattr(st.user, "given_name", "") or getattr(st.user, "name", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def store_on():
+    return bool(_secret("SUPABASE_URL") and _secret("SUPABASE_KEY"))
+
+
+def _sb(method, params=None, body=None, prefer=""):
+    key = _secret("SUPABASE_KEY")
+    headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    if prefer:
+        headers["Prefer"] = prefer
+    url = _secret("SUPABASE_URL").rstrip("/") + "/rest/v1/campus_mate"
+    return requests.request(method, url, headers=headers, params=params, json=body, timeout=20)
+
+
+def load_user():
+    """로그인 직후 한 번, 저장해 둔 내 정보를 불러온다."""
+    ss = st.session_state
+    email = user_email()
+    if not email or ss.get("loaded_for") == email:
+        return
+    ss.loaded_for = email
+    ss.store_ok = False
+    if not store_on():
+        return
+    try:
+        r = _sb("GET", params={"email": f"eq.{email}", "select": "data"})
+    except Exception:
+        ss.store_msg = "저장소에 연결하지 못했어요. 이번에는 저장되지 않아요."
+        return
+    if r.status_code != 200:
+        ss.store_msg = f"저장소에서 내 정보를 불러오지 못했어요 (코드 {r.status_code}). 이번에는 저장되지 않아요."
+        return
+    ss.store_ok = True
+    rows = r.json()
+    data = rows[0].get("data") if rows else None
+    if isinstance(data, dict) and data:
+        for k in SAVE_KEYS:
+            if k in data:
+                ss[k] = data[k]
+        ss.stages = {int(k): bool(v) for k, v in (ss.get("stages") or {}).items()}
+        for n in (3, 2, 1, 0):
+            ss.stages.setdefault(n, True)
+        ss.saved_sig = hashlib.md5(json.dumps({k: ss.get(k) for k in SAVE_KEYS}, sort_keys=True,
+                                              ensure_ascii=False, default=str).encode()).hexdigest()
+        ss.page = "대화"
+
+
+def save_user():
+    """바뀐 내용이 있을 때만 저장한다."""
+    ss = st.session_state
+    if not logged_in() or not ss.get("store_ok"):
+        return
+    snap = {k: ss.get(k) for k in SAVE_KEYS}
+    snap["messages"] = (snap.get("messages") or [])[-80:]
+    raw = json.dumps(snap, sort_keys=True, ensure_ascii=False, default=str)
+    sig = hashlib.md5(raw.encode()).hexdigest()
+    if ss.get("saved_sig") == sig:
+        return
+    try:
+        r = _sb("POST", params={"on_conflict": "email"},
+                body=[{"email": user_email(), "data": json.loads(raw), "updated_at": now().isoformat()}],
+                prefer="resolution=merge-duplicates,return=minimal")
+        if r.status_code in (200, 201, 204):
+            ss.saved_sig = sig
+            ss.store_msg = ""
+        else:
+            ss.store_msg = f"저장하지 못했어요 (코드 {r.status_code})."
+    except Exception:
+        ss.store_msg = "저장소에 연결하지 못했어요."
+
+
+def enter_guest():
+    st.session_state.guest = True
+
+
+def leave_guest():
+    st.session_state.guest = False
+
+
+def page_login():
+    left, right = st.columns([5, 4], gap="large")
+    with left:
+        H('<div class="cm-brand"><div class="cm-logo"></div><div><b>Campus Mate</b>'
+          '<span>말하면 정리되는 캠퍼스 일정</span></div></div>')
+        H('<h1 class="cm-h1">공지는 캡처하고, 일정은 말로.<br><mark>캘린더는 알아서 채워져요.</mark></h1>'
+          '<p class="cm-lead">로그인하면 시간표와 일정이 저장돼서, 다음에 들어와도 그대로 이어져요.</p>')
+        a, b, _ = st.columns([2, 2, 2])
+        a.button("Google로 로그인", type="primary", on_click=st.login, width="stretch")
+        b.button("로그인 없이 둘러보기", on_click=enter_guest, width="stretch")
+        H('<p class="cm-note">로그인에는 구글 계정의 이름과 이메일만 사용해요. '
+          '둘러보기로 들어가면 창을 닫을 때 내용이 사라져요.</p>')
+    with right:
+        t = today() + timedelta(days=5)
+        H('<div style="height:54px"></div><div class="cm-cand" style="max-width:420px">' + chip("과제") +
+          '<div class="b">유통경로관리 중간보고서</div><dl>'
+          f'<dt>마감</dt><dd>{fmt_date(t)} 23:59</dd><dt>제출</dt><dd>LMS 과제함 PDF</dd>'
+          f'<dt>알림</dt><dd>{fmt_date(t - timedelta(days=3))}부터 매일</dd></dl>'
+          '<div class="cm-ok" style="margin-top:10px">캘린더에 등록됨</div></div>')
+
+
+# ─────────────────────────────────────────────────────────────
 # 상태 초기화
 # ─────────────────────────────────────────────────────────────
 def init():
@@ -980,8 +1117,11 @@ def quick_start():
 
 
 def reset_all():
+    keep = {k: st.session_state[k] for k in ("guest", "loaded_for", "store_ok") if k in st.session_state}
     for k in list(st.session_state.keys()):
         del st.session_state[k]
+    for k, v in keep.items():
+        st.session_state[k] = v
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1005,7 +1145,7 @@ def page_onboarding():
         if step == 1:
             p = ss.profile
             a, b = st.columns(2)
-            name = a.text_input("이름 또는 닉네임", value=p["name"], placeholder="예: 서현")
+            name = a.text_input("이름 또는 닉네임", value=p["name"] or user_name(), placeholder="예: 서현")
             school = b.selectbox("학교", SCHOOLS, index=SCHOOLS.index(p["school"]) if p["school"] in SCHOOLS else 0)
             a, b = st.columns(2)
             major = a.text_input("전공·학과", value=p["major"], placeholder="예: 경영학부")
@@ -1688,7 +1828,8 @@ def page_settings():
         st.button("처음부터 다시 시작", on_click=reset_all)
     st.divider()
     H('<p class="cm-note">사진 인식: ' + ('AI 연결됨. 시간표와 공지 캡처를 실제로 읽어요.' if ai_ready() else 'AI 키 없음. 예시 데이터로 동작해요.')
-      + ' 대화 이해는 규칙 기반이고 학사일정은 예시 데이터입니다. 입력한 내용은 브라우저 창을 닫으면 사라져요.</p>')
+      + ' 대화 이해는 규칙 기반이고 학사일정은 예시 데이터입니다. '
+      + ('로그인 중이라 내용이 자동 저장돼요.' if logged_in() and st.session_state.get('store_ok') else '지금은 저장되지 않아서 창을 닫으면 내용이 사라져요.') + '</p>')
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1703,11 +1844,17 @@ NAV = [("대화", ":material/forum:", page_chat),
        ("설정", ":material/settings:", page_settings)]
 
 
-def main():
-    init()
+def render():
     ss = st.session_state
+    hide = '<style>[data-testid="stSidebar"],[data-testid="stSidebarCollapsedControl"]{display:none;}</style>'
+    if auth_on() and not logged_in() and not ss.get("guest"):
+        H(hide)
+        page_login()
+        return
+    if logged_in():
+        load_user()
     if not ss.onboarded:
-        H('<style>[data-testid="stSidebar"],[data-testid="stSidebarCollapsedControl"]{display:none;}</style>')
+        H(hide)
         page_onboarding()
         return
     with st.sidebar:
@@ -1718,9 +1865,28 @@ def main():
             st.button(label, key="nav_" + name, icon=icon, width="stretch",
                       type="primary" if ss.page == name else "secondary", on_click=go, args=(name,))
         p = ss.profile
+        if logged_in():
+            state = "자동 저장 켜짐" if ss.get("store_ok") else "저장 안 됨"
+            acct = f'<br>{esc(user_email())}<br>{state}'
+        elif auth_on():
+            acct = "<br>둘러보기 중 · 저장 안 됨"
+        else:
+            acct = ""
         H(f'<div class="cm-me"><b>{esc(p["name"])}</b><br>{esc(p["school"])} {esc(p["major"])} {esc(p["grade"])}'
-          f'<br>해설 언어: {esc(p["lang"])}</div>')
+          f'<br>해설 언어: {esc(p["lang"])}{acct}</div>')
+        if logged_in():
+            st.button("로그아웃", key="logout", icon=":material/logout:", on_click=st.logout, width="stretch")
+        elif auth_on():
+            st.button("로그인하기", key="to_login", icon=":material/login:", on_click=leave_guest, width="stretch")
+    if ss.get("store_msg"):
+        st.warning(ss.store_msg)
     dict((n, f) for n, _, f in NAV).get(ss.page, page_chat)()
+
+
+def main():
+    init()
+    render()
+    save_user()
 
 
 main()
