@@ -484,6 +484,17 @@ def _secret(name):
         return ""
 
 
+def _bad_key(v):
+    """헤더로 보낼 수 없는 값(한글, 빈칸, 줄바꿈)이 섞였는지 본다."""
+    return (not v.isascii()) or bool(re.search(r"\s", v))
+
+
+def _net_err(e):
+    if isinstance(e, requests.exceptions.Timeout):
+        return "AI 응답이 너무 오래 걸려서 멈췄어요. 한 번 더 시도해 주세요."
+    return f"AI 서버에 연결하지 못했어요 ({type(e).__name__}). 잠시 뒤 다시 시도해 주세요."
+
+
 def ai_ready():
     return bool(_secret("GEMINI_API_KEY"))
 
@@ -505,8 +516,8 @@ def gemini_models(key):
     try:
         r = requests.get(f"{GEMINI_API}/models", headers={"x-goog-api-key": key},
                          params={"pageSize": 1000}, timeout=30)
-    except Exception:
-        return [], "인터넷 연결 문제로 AI에 닿지 못했어요."
+    except Exception as e:
+        return [], _net_err(e)
     if r.status_code != 200:
         return [], f"모델 목록을 받지 못했어요 (코드 {r.status_code}). {_err_detail(r)}"
     scored = []
@@ -535,6 +546,9 @@ def gemini_json(data, mime, prompt):
     key = _secret("GEMINI_API_KEY")
     if not key:
         return None, "API 키가 설정되지 않았어요."
+    if _bad_key(key):
+        return None, ("Secrets의 GEMINI_API_KEY 값에 한글이나 빈칸, 줄바꿈이 섞여 있어요. "
+                      "AI Studio에서 키를 다시 복사해 따옴표 안에 붙여 넣어 주세요.")
     body = {"contents": [{"parts": [
         {"inline_data": {"mime_type": mime or "image/png", "data": base64.b64encode(data).decode()}},
         {"text": prompt}]}],
@@ -549,9 +563,10 @@ def gemini_json(data, mime, prompt):
     for model in order:
         try:
             r = requests.post(f"{GEMINI_API}/models/{model}:generateContent",
-                              headers={"x-goog-api-key": key}, json=body, timeout=60)
-        except Exception:
-            return None, "인터넷 연결 문제로 AI에 닿지 못했어요."
+                              headers={"x-goog-api-key": key}, json=body, timeout=90)
+        except Exception as e:
+            err = _net_err(e)
+            continue
         if r.status_code == 200:
             try:
                 parts = r.json()["candidates"][0]["content"]["parts"]
@@ -1001,10 +1016,13 @@ def load_user():
     ss.store_ok = False
     if not store_on():
         return
+    if _bad_key(_secret("SUPABASE_KEY")) or _bad_key(_secret("SUPABASE_URL")):
+        ss.store_msg = "Secrets의 SUPABASE_URL 또는 SUPABASE_KEY 값이 올바르지 않아요. 이번에는 저장되지 않아요."
+        return
     try:
         r = _sb("GET", params={"email": f"eq.{email}", "select": "data"})
-    except Exception:
-        ss.store_msg = "저장소에 연결하지 못했어요. 이번에는 저장되지 않아요."
+    except Exception as e:
+        ss.store_msg = f"저장소에 연결하지 못했어요 ({type(e).__name__}). 이번에는 저장되지 않아요."
         return
     if r.status_code != 200:
         ss.store_msg = f"저장소에서 내 정보를 불러오지 못했어요 (코드 {r.status_code}). 이번에는 저장되지 않아요."
