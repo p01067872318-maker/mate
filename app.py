@@ -3,13 +3,17 @@
 
 실행:  streamlit run app.py
 """
+import base64
 import calendar as pycal
+import hashlib
 import html
+import json
 import random
 import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
+import requests
 import streamlit as st
 
 st.set_page_config(page_title="Campus Mate", page_icon="📎", layout="wide",
@@ -464,6 +468,119 @@ def sample_tasks():
 
 
 # ─────────────────────────────────────────────────────────────
+# 이미지 인식 (Gemini · Secrets에 GEMINI_API_KEY가 있을 때만 동작)
+# ─────────────────────────────────────────────────────────────
+GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+
+def _secret(name):
+    try:
+        return str(st.secrets.get(name, "") or "").strip()
+    except Exception:
+        return ""
+
+
+def ai_ready():
+    return bool(_secret("GEMINI_API_KEY"))
+
+
+def gemini_json(data, mime, prompt):
+    """이미지(또는 PDF)와 지시문을 보내 JSON을 돌려받는다. (결과, 오류문구)"""
+    key = _secret("GEMINI_API_KEY")
+    if not key:
+        return None, "API 키가 설정되지 않았어요."
+    body = {"contents": [{"parts": [
+        {"inline_data": {"mime_type": mime or "image/png", "data": base64.b64encode(data).decode()}},
+        {"text": prompt}]}],
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}
+    custom = _secret("GEMINI_MODEL")
+    err = "응답을 받지 못했어요."
+    for model in ([custom] if custom else []) + GEMINI_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            r = requests.post(url, headers={"x-goog-api-key": key}, json=body, timeout=60)
+        except Exception:
+            return None, "인터넷 연결 문제로 AI에 닿지 못했어요."
+        if r.status_code == 404:
+            err = "사용할 수 있는 Gemini 모델을 찾지 못했어요."
+            continue
+        if r.status_code == 429:
+            return None, "무료 사용 한도를 잠시 넘었어요. 1분쯤 뒤에 다시 시도해 주세요."
+        if r.status_code in (400, 401, 403):
+            return None, f"API 키나 요청에 문제가 있어요 (코드 {r.status_code}). Secrets의 키를 확인해 주세요."
+        if r.status_code != 200:
+            err = f"AI 서버 오류예요 (코드 {r.status_code})."
+            continue
+        try:
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            text = "".join(p.get("text", "") for p in parts).strip()
+            text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+            return json.loads(text), ""
+        except Exception:
+            err = "AI 응답을 해석하지 못했어요."
+    return None, err
+
+
+def _hhmm(v):
+    m = re.match(r"^\s*(\d{1,2})[:시]\s*(\d{2})?", str(v or ""))
+    if not m or int(m.group(1)) > 23:
+        return ""
+    return f"{int(m.group(1)):02d}:{m.group(2) or '00'}"
+
+
+def read_timetable(data, mime):
+    prompt = ("이 이미지는 한국 대학생의 주간 시간표(에브리타임 등) 캡처다. 모든 수업 칸을 읽어 JSON 배열로만 답하라. "
+              "같은 수업이 여러 요일에 있으면 요일마다 항목을 따로 만든다. 각 항목의 키: "
+              '"강의명"(문자열), "요일"("월","화","수","목","금","토","일" 중 하나), '
+              '"시작"("HH:MM" 24시간제), "종료"("HH:MM"), "강의실"(없으면 빈 문자열). '
+              "시간은 왼쪽 시간 눈금과 칸의 위치로 판단한다. 시간표가 아니면 빈 배열 []을 답하라.")
+    out, err = gemini_json(data, mime, prompt)
+    if err:
+        return None, err
+    if isinstance(out, dict):
+        out = next((v for v in out.values() if isinstance(v, list)), [])
+    rows = []
+    for r in out if isinstance(out, list) else []:
+        if not isinstance(r, dict):
+            continue
+        name, day = str(r.get("강의명") or "").strip(), str(r.get("요일") or "").strip()[:1]
+        if name and day in DAYS:
+            rows.append({"강의명": name, "요일": day, "시작": _hhmm(r.get("시작")), "종료": _hhmm(r.get("종료")),
+                         "강의실": str(r.get("강의실") or "").strip()})
+    if not rows:
+        return None, "사진에서 수업을 찾지 못했어요. 시간표 전체가 보이는 캡처인지 확인해 주세요."
+    rows.sort(key=lambda r: (DAYS.index(r["요일"]), r["시작"]))
+    return rows, ""
+
+
+def read_notice(data, mime):
+    t = today()
+    prompt = (f"오늘은 {t.isoformat()}({DAYS[t.weekday()]}요일)이다. 이 자료는 대학 수업 공지, 과제 안내, 단톡방 캡처 중 하나다. "
+              "여기서 학생이 캘린더에 등록해야 할 가장 중요한 일정 하나를 찾아 JSON 객체로만 답하라. 키: "
+              '"found"(일정이 있으면 true), "title"(20자 이내 일정 이름), '
+              f'"course"(과목명. 다음 중 해당하면 그대로 사용: {", ".join(courses()) or "없음"}. 모르면 빈 문자열), '
+              '"category"("과제","시험","팀플","수업","학사","기타" 중 하나), "date"("YYYY-MM-DD", 마감일 또는 일정 날짜), '
+              '"time"("HH:MM" 24시간제, 없으면 빈 문자열), "location"(없으면 빈 문자열), '
+              '"how"(제출 방식, 없으면 빈 문자열), "size"(분량, 없으면 빈 문자열), "topic"(주제나 범위, 없으면 빈 문자열). '
+              "연도가 없으면 오늘 이후의 가장 가까운 날짜로 해석한다.")
+    out, err = gemini_json(data, mime, prompt)
+    if err:
+        return None, err
+    if isinstance(out, list) and out:
+        out = out[0]
+    if not isinstance(out, dict) or not out.get("found", True) or not dparse(out.get("date")):
+        return None, "자료에서 날짜가 있는 일정을 찾지 못했어요. 일정을 말로 알려 주시면 등록할게요."
+    cat = out.get("category") if out.get("category") in CATS else "기타"
+    det = [f"{k}: {str(out.get(f) or '').strip()}" for k, f in (("주제", "topic"), ("제출", "how"), ("분량", "size"))
+           if str(out.get(f) or "").strip()]
+    course = str(out.get("course") or "").strip()
+    return {"id": uid(), "title": str(out.get("title") or "새 일정").strip()[:40], "category": cat,
+            "course": course, "date": dparse(out["date"]).isoformat(), "time": _hhmm(out.get("time")),
+            "location": str(out.get("location") or "").strip(), "details": "\n".join(det),
+            "source": "공지 캡처", "state": "확인 필요"}, ""
+
+
+# ─────────────────────────────────────────────────────────────
 # 대화 이해 (규칙 기반 · API 없음)
 # ─────────────────────────────────────────────────────────────
 KW = [("시험", ["중간고사", "기말고사", "퀴즈", "쪽지시험", "시험", "테스트"]),
@@ -650,15 +767,24 @@ def notice_sample():
             "date": d, "time": "23:59", "how": "LMS 과제함에 PDF 업로드", "size": "A4 3매 이내"}
 
 
-def respond_to_capture(real_file=False):
+def respond_to_capture(upload=None):
+    if upload is not None and ai_ready():
+        with st.spinner("자료를 읽고 있어요"):
+            cand, err = read_notice(upload.getvalue(), getattr(upload, "type", "") or "image/png")
+        if err:
+            say("assistant", err)
+            return
+        st.session_state.candidates[cand["id"]] = cand
+        say("assistant", "올려 주신 자료에서 일정을 찾았어요. 맞는지 확인해 주세요.", cand=cand["id"])
+        return
     n = notice_sample()
     cand = {"id": uid(), "title": n["title"], "category": "과제", "course": n["course"],
             "date": n["date"].isoformat(), "time": n["time"], "location": "",
             "details": f"제출: {n['how']}\n분량: {n['size']}", "source": "공지 캡처", "state": "확인 필요"}
     st.session_state.candidates[cand["id"]] = cand
     pre = ""
-    if real_file:
-        pre = ("데모 버전은 올린 이미지를 실제로 읽지는 않아요. "
+    if upload is not None:
+        pre = ("AI 키가 연결되지 않아 올린 자료를 실제로 읽지는 못했어요. "
                "대신 예시 공지로 인식 과정을 보여 드릴게요.\n\n")
     say("assistant", pre + "공지에서 과목, 과제 내용, 마감일, 제출 방식을 찾았어요. 맞는지 확인해 주세요.",
         cand=cand["id"])
@@ -849,14 +975,31 @@ def page_onboarding():
             st.write("")
             H('<div class="cm-h2">에브리타임 시간표 캡처를 올려 주세요</div>')
             up = st.file_uploader("시간표 캡처", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
-            if up is not None:
-                st.info("데모 버전은 이미지를 실제로 읽지 않아요. 아래 예시 인식 결과를 내 시간표에 맞게 고쳐 쓰면 돼요.")
-            H('<p class="cm-note">캡처가 없어도 괜찮아요. 아래 표가 인식 결과 예시예요. '
-              '칸을 눌러 고치거나 맨 아래 줄에 수업을 추가할 수 있어요.</p>')
+            if up is not None and ai_ready():
+                raw = up.getvalue()
+                sig = hashlib.md5(raw).hexdigest()
+                if ss.get("tt_sig") != sig:
+                    with st.spinner("시간표를 읽고 있어요"):
+                        rows, err = read_timetable(raw, getattr(up, "type", "") or "image/png")
+                    ss.tt_sig = sig
+                    ss.tt_msg = err or f"수업 {len(rows)}건을 읽었어요. 틀린 곳이 있으면 아래 표에서 고쳐 주세요."
+                    ss.tt_ok = not err
+                    if not err:
+                        ss.tt_rows = rows
+                        ss.tt_ver = ss.get("tt_ver", 0) + 1
+                (st.success if ss.get("tt_ok") else st.warning)(ss.get("tt_msg", ""))
+            elif up is not None:
+                st.info("AI 키가 연결되지 않아 이미지를 읽지 못했어요. 아래 예시 표를 내 시간표에 맞게 고쳐 쓰면 돼요.")
+            if ai_ready():
+                H('<p class="cm-note">캡처를 올리면 AI가 수업을 읽어 아래 표를 채워요. 캡처가 없으면 예시 표를 고쳐 써도 돼요. '
+                  '칸을 눌러 고치거나 맨 아래 줄에 수업을 추가할 수 있어요.</p>')
+            else:
+                H('<p class="cm-note">캡처가 없어도 괜찮아요. 아래 표가 인식 결과 예시예요. '
+                  '칸을 눌러 고치거나 맨 아래 줄에 수업을 추가할 수 있어요.</p>')
             edited = st.data_editor(
                 ss.tt_rows if ss.tt_rows is not None else SAMPLE_TIMETABLE,
-                num_rows="dynamic", hide_index=True, key="tt_editor",
-                column_config={"요일": st.column_config.SelectboxColumn("요일", options=DAYS[:5], required=True),
+                num_rows="dynamic", hide_index=True, key=f"tt_editor_{ss.get('tt_ver', 0)}",
+                column_config={"요일": st.column_config.SelectboxColumn("요일", options=DAYS, required=True),
                                "시작": st.column_config.TextColumn("시작", help="예: 10:30"),
                                "종료": st.column_config.TextColumn("종료", help="예: 12:00")})
             a, b, _ = st.columns([1, 2, 3])
@@ -1029,7 +1172,7 @@ def page_chat():
         files = getattr(prompt, "files", None) or []
         if files:
             say("user", (text + "\n\n" if text else "") + f"첨부: {files[0].name}")
-            respond_to_capture(real_file=True)
+            respond_to_capture(files[0])
         elif text:
             say("user", text)
             respond(text)
@@ -1472,8 +1615,8 @@ def page_settings():
         H('<div class="cm-h2">데모 초기화</div>')
         st.button("처음부터 다시 시작", on_click=reset_all)
     st.divider()
-    H('<p class="cm-note">이 버전은 API 없이 동작하는 시연용 데모예요. 대화 이해는 규칙 기반이고, '
-      '학사일정과 캡처 인식 결과는 예시 데이터입니다. 입력한 내용은 브라우저 창을 닫으면 사라져요.</p>')
+    H('<p class="cm-note">사진 인식: ' + ('AI 연결됨. 시간표와 공지 캡처를 실제로 읽어요.' if ai_ready() else 'AI 키 없음. 예시 데이터로 동작해요.')
+      + ' 대화 이해는 규칙 기반이고 학사일정은 예시 데이터입니다. 입력한 내용은 브라우저 창을 닫으면 사라져요.</p>')
 
 
 # ─────────────────────────────────────────────────────────────
