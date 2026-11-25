@@ -24,6 +24,7 @@ st.set_page_config(page_title="Campus Mate", page_icon="📎", layout="wide",
 # ─────────────────────────────────────────────────────────────
 TZ = timezone(timedelta(hours=9))
 DAYS = ["월", "화", "수", "목", "금", "토", "일"]
+ONLINE = "온라인"
 CATS = ["과제", "시험", "팀플", "수업", "학사", "기타"]
 CAT_COLOR = {"과제": "#F0567A", "시험": "#7C5CF0", "팀플": "#12A883",
              "수업": "#3D5AFE", "학사": "#8A93A8", "기타": "#E89A1C"}
@@ -442,7 +443,10 @@ def class_events(rows):
     for r in rows:
         name = str(r.get("강의명") or "").strip()
         day = str(r.get("요일") or "").strip()
-        if not name or day not in DAYS:
+        if not name:
+            continue
+        if day not in DAYS:
+            out.append(new_event(name, "수업", None, course=name, location=ONLINE, source="시간표 캡처"))
             continue
         first = start + timedelta(days=DAYS.index(day))
         out.append(new_event(name, "수업", first, time=str(r.get("시작") or "").strip(),
@@ -582,7 +586,10 @@ def read_timetable(data, mime):
               "같은 수업이 여러 요일에 있으면 요일마다 항목을 따로 만든다. 각 항목의 키: "
               '"강의명"(문자열), "요일"("월","화","수","목","금","토","일" 중 하나), '
               '"시작"("HH:MM" 24시간제), "종료"("HH:MM"), "강의실"(없으면 빈 문자열). '
-              "시간은 왼쪽 시간 눈금과 칸의 위치로 판단한다. 시간표가 아니면 빈 배열 []을 답하라.")
+              "시간은 왼쪽 시간 눈금과 칸의 위치로 판단한다. "
+              "격자 아래나 바깥에 따로 적힌 온라인 강의·시간 미지정 강의(예: K-MOOC, 사이버 강의)도 빠짐없이 포함하되, "
+              '그런 항목은 "요일"을 "온라인"으로, "시작"과 "종료"를 빈 문자열로 둔다. '
+              "시간표가 아니면 빈 배열 []을 답하라.")
     out, err = gemini_json(data, mime, prompt)
     if err:
         return None, err
@@ -596,9 +603,12 @@ def read_timetable(data, mime):
         if name and day in DAYS:
             rows.append({"강의명": name, "요일": day, "시작": _hhmm(r.get("시작")), "종료": _hhmm(r.get("종료")),
                          "강의실": str(r.get("강의실") or "").strip()})
+        elif name:
+            rows.append({"강의명": name, "요일": ONLINE, "시작": "", "종료": "",
+                         "강의실": str(r.get("강의실") or "").strip()})
     if not rows:
         return None, "사진에서 수업을 찾지 못했어요. 시간표 전체가 보이는 캡처인지 확인해 주세요."
-    rows.sort(key=lambda r: (DAYS.index(r["요일"]), r["시작"]))
+    rows.sort(key=lambda r: (DAYS.index(r["요일"]) if r["요일"] in DAYS else 9, r["시작"]))
     return rows, ""
 
 
@@ -724,15 +734,21 @@ def parse_time(text):
 
 
 def find_course(text):
-    compact = text.replace(" ", "")
+    compact = text.replace(" ", "").lower()
+    names = []
     for c in courses():
-        if c.replace(" ", "") in compact:
-            return c, c
-    for c in courses():
-        for n in (3, 2):
-            short = c[:n]
-            if len(c) > n and short in compact:
-                return c, short
+        whole = c.replace(" ", "").lower()
+        parts = [x for x in whole.split(":") if len(x) >= 2]
+        names.append((c, [whole] + parts[::-1]))
+    for c, al in names:
+        for x in al:
+            if x in compact:
+                return c, x
+    for n in (4, 3, 2):
+        for c, al in names:
+            for x in al:
+                if len(x) > n and x[:n] in compact:
+                    return c, x[:n]
     return "", ""
 
 
@@ -757,7 +773,7 @@ def understand(text):
     if cat == "과제" and not tm:
         tm = "23:59"
     rest = text
-    for h in dhit + thit + ([chit] if chit else []):
+    for h in dhit + thit:
         rest = rest.replace(h, " ")
     rest = re.sub(r"(까지|있어요|있어|해야 해|해야 돼|해 줘|해줘|등록|추가)", " ", rest)
     rest = re.sub(r"[.,!?~]+", " ", rest)
@@ -1048,7 +1064,8 @@ def page_onboarding():
             edited = st.data_editor(
                 ss.tt_rows if ss.tt_rows is not None else SAMPLE_TIMETABLE,
                 num_rows="dynamic", hide_index=True, key=f"tt_editor_{ss.get('tt_ver', 0)}",
-                column_config={"요일": st.column_config.SelectboxColumn("요일", options=DAYS, required=True),
+                column_config={"요일": st.column_config.SelectboxColumn("요일", options=DAYS + [ONLINE], required=True,
+                                                                     help="시간이 정해지지 않은 온라인 강의는 ‘온라인’을 고르세요."),
                                "시작": st.column_config.TextColumn("시작", help="예: 10:30"),
                                "종료": st.column_config.TextColumn("종료", help="예: 12:00")})
             a, b, _ = st.columns([1, 2, 3])
@@ -1073,7 +1090,7 @@ def page_onboarding():
             H(f'<div class="cm-cand"><div class="b">{esc(p["name"])}님의 캠퍼스</div><dl>'
               f'<dt>소속</dt><dd>{esc(who)}{esc(extra)}</dd>'
               f'<dt>학사일정</dt><dd>{len(academic_events(p["school"]))}건 등록 예정</dd>'
-              f'<dt>수업</dt><dd>{esc(", ".join(names))} (매주 반복 {len(rows)}건)</dd>'
+              f'<dt>수업</dt><dd>{esc(", ".join(names))} (매주 반복 {len([r for r in rows if r.get("요일") in DAYS])}건)</dd>'
               '<dt>알림</dt><dd>마감 3일 전, 2일 전, 1일 전, 당일</dd></dl></div>')
             with_s = st.checkbox("예시 과제와 팀플도 넣어서 둘러보기", value=True,
                                  help="알림과 함께 학습 기능을 바로 볼 수 있어요. 설정에서 언제든 지울 수 있어요.")
@@ -1410,9 +1427,10 @@ def _mins(s):
 
 def page_timetable():
     cls = [e for e in st.session_state.events if e["category"] == "수업" and e["weekly"]]
+    online = [e for e in st.session_state.events if e["category"] == "수업" and not e["weekly"] and not e["date"]]
     H('<h1 class="cm-h1">이번 학기 <mark>시간표</mark></h1>'
       '<p class="cm-lead">캡처에서 읽어 온 수업이 매주 반복 일정으로 등록돼 있어요.</p>')
-    if not cls:
+    if not cls and not online:
         st.info("등록된 수업이 없어요. 설정에서 처음부터 다시 시작하면 시간표를 등록할 수 있어요.")
         return
     names = courses()
@@ -1437,6 +1455,11 @@ def page_timetable():
                        f'<b>{esc(e["title"])}</b><span>{esc(e["time"])}~{esc(e["end_time"])} {esc(e["location"])}</span></div>')
         out += f'<div class="col" style="height:{(h1 - h0) * 60}px">{blocks}</div>'
     H(out + "</div>")
+    if online:
+        H('<div class="cm-h2" style="margin-top:20px">온라인 강의</div>' + "".join(
+            f'<div class="cm-row"><div class="bar" style="background:{CAT_COLOR["수업"]}"></div>'
+            f'<div><div class="b">{esc(e["title"])}</div><div class="s">정해진 시간 없이 듣는 강의</div></div></div>'
+            for e in online))
     st.write("")
     total = sum((_mins(e["end_time"]) or 0) - (_mins(e["time"]) or 0) for e in cls)
     H(f'<p class="cm-note">{len(names)}과목, 주 {len(cls)}회, 주당 수업 {total // 60}시간 {total % 60:02d}분</p>')
